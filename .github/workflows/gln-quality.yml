@@ -1,0 +1,78 @@
+---
+
+name: Quality workflow
+run-name: "Workflow: ${{ github.workflow }} on event: ${{ github.event_name }}"
+on: 
+    pull_request:
+    push:
+      branches_ignore:
+        - main
+
+jobs:
+  build :
+    runs-on: ubuntu-latest
+    steps:
+        - uses: actions/checkout@v3
+        - name: Setup Java
+          uses: actions/setup-Java@v3
+          with:
+            java-version: '17'
+            distribution: 'adopt'
+        - name: Use Node.js v12.x
+          uses: actions/setup-node@v3
+          with:
+            node-version: '16'
+        - name: Build with Maven
+          run: mvn -B package --file pom.xml
+        - name: Get Token benauca-app token
+          id: benauca-app
+          uses: getsentry/action-github-app-token@v2
+          with:
+            app_id: ${{ secrets.APP_ID }}
+            private_key: ${{ secrets.APP_PRIVATE_KEY }}
+        - run: npm install xmldom
+        - name: Publish test results to GitHub
+          
+          uses: actions/github-script@v6
+          with:
+            github-token: ${{ steps.benauca-app.outputs.token }}
+            script: |
+              // Parse the JUnit XML files and convert them to Check Run annotations
+              const fs = require('fs');
+              const path = require('path'); 
+              // Find all JUnit XML files in the artifact directory
+              const dir = 'target/surefire-reports/';
+              // Find all XML files in the directory
+              const files = fs.readdirSync(dir)
+                .filter(file => path.extname(file) === '.xml');
+              core.info(`Found ${files.length} test result files`);
+              // Parse the XML files and extract the test results
+              const testsuites = files.map(file => {
+                const { DOMParser } = require('xmldom');
+                parser = new DOMParser();
+                const xml = fs.readFileSync(path.join(process.cwd(), dir+file), 'utf8');
+                const doc = parser.parseFromString(xml, 'application/xml');
+                return doc.documentElement;
+              });
+              
+              // Create Payload for Check Run
+              const payload = {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'Testing Report',
+                head_sha: context.sha,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: 'Testing Report',
+                  summary: `${testsuites.length} test suites`,
+                  text: 'Testing phase completed successfully',
+                  annotations: []
+                }
+              };
+              // Create the Check Run on GitHub
+              const response = github.rest.checks.create(payload);
+              //core.info(`Check Run created: ${response.data.html_url}`);
+
+            
+              
